@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal"
+    android:background="#1a1a1a"
+    android:padding="12dp">
+
+    <!-- ============ إطار الفيديو (اليسار) ============ -->
+    <FrameLayout
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="3"
+        android:background="#141414"
+        android:layout_marginEnd="10dp">
+
+        <!-- عرض الكاميرا الحي عبر CameraX -->
+        <androidx.camera.view.PreviewView
+            android:id="@+id/previewView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- طبقة رسم مربعات الطلاب والممنوعات فوق الفيديو مباشرة -->
+        <com.skyline.proctor.OverlayView
+            android:id="@+id/overlayView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <TextView
+            android:id="@+id/tvCameraPlaceholder"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="الكاميرا متوقفة&#10;اضغط على 'بدء المراقبة'"
+            android:textColor="#666666"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:gravity="center" />
+    </FrameLayout>
+
+    <!-- ============ لوحة التحكم (اليمين) ============ -->
+    <ScrollView
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="لوحة التحكم والمراقبة"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:gravity="center"
+                android:paddingBottom="12dp" />
+
+            <!-- الإحصائيات الحية -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="#222222"
+                android:padding="10dp"
+                android:layout_marginBottom="10dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="📊 الإحصائيات الحالية"
+                    android:textColor="#81c784"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:paddingBottom="6dp" />
+
+                <TextView
+                    android:id="@+id/tvStudentsCount"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="الطلاب في القاعة: 0"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    android:paddingBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/tvViolationsCount"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="المخالفات المسجلة: 0"
+                    android:textColor="#ff5252"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
+            <!-- أزرار التحكم -->
+            <Button
+                android:id="@+id/btnStart"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="▶ بدء المراقبة"
+                android:backgroundTint="#28a745"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/btnStop"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="⏹ إيقاف المراقبة"
+                android:backgroundTint="#dc3545"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:enabled="false"
+                android:layout_marginBottom="14dp" />
+
+            <!-- سجل الأحداث -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="🚨 سجل التنبيهات (Live Logs):"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:paddingBottom="4dp" />
+
+            <ScrollView
+                android:layout_width="match_parent"
+                android:layout_height="260dp"
+                android:background="#141414">
+
+                <TextView
+                    android:id="@+id/tvLog"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:padding="8dp"
+                    android:textColor="#ff8a80"
+                    android:textSize="11sp"
+                    android:fontFamily="monospace" />
+            </ScrollView>
+
+        </LinearLayout>
+    </ScrollView>
+
+</LinearLayout>

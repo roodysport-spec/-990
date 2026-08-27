@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.ProctorApp" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#28a745</item>
+        <item name="colorPrimaryDark">#141414</item>
+        <item name="colorAccent">#64b5f6</item>
+        <item name="android:windowBackground">#1a1a1a</item>
+    </style>
+</resources>
