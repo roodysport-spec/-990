@@ -60,6 +60,32 @@
                 android:gravity="center"
                 android:paddingBottom="12dp" />
 
+            <!-- إعدادات القاعة -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="#222222"
+                android:padding="10dp"
+                android:layout_marginBottom="10dp"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="⚙️ وضع القاعة الكبيرة (10م)"
+                    android:textColor="#64b5f6"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <Switch
+                    android:id="@+id/swHallMode"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="true" />
+            </LinearLayout>
+
             <!-- الإحصائيات الحية -->
             <LinearLayout
                 android:layout_width="match_parent"
