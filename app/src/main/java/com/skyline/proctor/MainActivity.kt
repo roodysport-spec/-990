@@ -21,31 +21,38 @@ import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * MainActivity - المرحلة 2: كشف الوجوه + اتجاه النظر + تتبع الطلاب + التنبيهات
+ * MainActivity - المرحلة 3 (كاملة): كشف الوجوه + الاتجاه + الممنوعات + الصوت + التنبيهات
  *
- * هذا يقابل الآن حلقة update_frame() بالبايثون بشكل شبه كامل (فيما يخص الوجوه):
- *  - تحويل كل إطار لـ Bitmap
- *  - تمريره لـ FaceMonitor (MediaPipe + الاتجاه + التتبع)
- *  - رسم المربعات فوق الفيديو (OverlayView)
- *  - إطلاق تنبيه + حفظ دليل عند "التفات مستمر"
- *  - حفظ تقرير CSV عند إيقاف المراقبة
- *
- * كشف الممنوعات (موبايل/كتاب/لابتوب) وكشف الصوت لسا محجوزين للمرحلة 3.
+ * هذا الآن يقابل update_frame() بالبايثون بشكل كامل:
+ *  1) كشف الممنوعات (موبايل/كتاب/لابتوب) عبر تقسيم الصورة (ObjectMonitor)
+ *  2) كشف الوجوه وتتبعها وحساب اتجاه النظر (FaceMonitor)
+ *  3) كشف الصوت (AudioMonitor)
+ *  4) رسم كل شي فوق الفيديو (OverlayView) + تنبيهات + أدلة + تقرير CSV
  */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var cameraExecutor: ExecutorService
+    private lateinit var objectDetectionExecutor: ExecutorService
     private var cameraProvider: ProcessCameraProvider? = null
     private var isMonitoring = false
 
     private var faceMonitor: FaceMonitor? = null
+    private var objectMonitor: ObjectMonitor? = null
+    private var audioMonitor: AudioMonitor? = null
     private lateinit var alertManager: AlertManager
 
-    // يمنع تراكم إطارات بالمعالجة (نفس فكرة "افحص إطار وخلص قبل ما تجيب التالي")
     private val isProcessingFrame = AtomicBoolean(false)
+    private val isProcessingObjects = AtomicBoolean(false)
+    private val frameCounter = AtomicInteger(0)
+
+    // كشف الممنوعات أثقل حسابياً من كشف الوجوه (يشغّل الموديل 6 مرات لكل إطار بسبب التقسيم)
+    // فنشغّله كل 8 إطارات بدل كل إطار، عشان نحافظ على سلاسة الفيديو الحي
+    private val OBJECT_DETECTION_INTERVAL = 8
+
     private var lastBitmapForEvidence: android.graphics.Bitmap? = null
     private var violationsCount = 0
     private var studentsCount = 0
@@ -72,17 +79,20 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // تحميل مكتبة OpenCV الأصلية (لازمة لحساب اتجاه الرأس)
         if (!OpenCVLoader.initDebug()) {
             android.util.Log.e("MainActivity", "فشل تحميل OpenCV")
         }
 
         alertManager = AlertManager(this)
         cameraExecutor = Executors.newSingleThreadExecutor()
+        objectDetectionExecutor = Executors.newSingleThreadExecutor()
         binding.tvLog.movementMethod = ScrollingMovementMethod()
 
         binding.btnStart.setOnClickListener { onStartClicked() }
         binding.btnStop.setOnClickListener { stopMonitoring() }
+
+        // منع تغيير وضع القاعة أثناء المراقبة (نفس منطق تعطيل source_combo بالبايثون)
+        binding.swHallMode.isEnabled = true
 
         logEvent("جاهز. اضغط 'بدء المراقبة' للبدء.")
     }
@@ -98,10 +108,19 @@ class MainActivity : AppCompatActivity() {
     private fun startMonitoring() {
         logEvent("جاري الاتصال بالكاميرا...")
 
-        // نفس منطق is_hall_mode بالبايثون - حالياً نثبته true (وضع القاعة الكبيرة)
-        // لاحقاً نربطه بمفتاح بالواجهة زي hall_mode_switch الأصلي
-        faceMonitor = FaceMonitor(this, highSensitivity = true) { statuses, count ->
+        val isHallMode = binding.swHallMode.isChecked
+
+        faceMonitor = FaceMonitor(this, highSensitivity = isHallMode) { statuses, count ->
             runOnUiThread { onFaceResults(statuses, count) }
+        }
+        objectMonitor = ObjectMonitor(this, highSensitivity = isHallMode)
+
+        audioMonitor = AudioMonitor(this) {
+            runOnUiThread { onAudioViolation() }
+        }
+        val audioStarted = audioMonitor?.start() ?: false
+        if (!audioStarted) {
+            logEvent("⚠️ تحذير: تعذر تشغيل المايكروفون")
         }
 
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
@@ -113,7 +132,8 @@ class MainActivity : AppCompatActivity() {
             binding.tvCameraPlaceholder.visibility = android.view.View.GONE
             binding.btnStart.isEnabled = false
             binding.btnStop.isEnabled = true
-            logEvent("✅ تم بدء المراقبة بنجاح...")
+            binding.swHallMode.isEnabled = false
+            logEvent("✅ تم بدء المراقبة بنجاح... (وضع القاعة الكبيرة: ${if (isHallMode) "مفعّل" else "معطّل"})")
         }, ContextCompat.getMainExecutor(this))
     }
 
@@ -140,7 +160,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun analyzeFrame(imageProxy: ImageProxy) {
-        // إذا لسا فريم سابق قيد المعالجة، نتجاوز هذا الفريم (زي STRATEGY_KEEP_ONLY_LATEST)
         if (!isProcessingFrame.compareAndSet(false, true)) {
             imageProxy.close()
             return
@@ -151,7 +170,25 @@ class MainActivity : AppCompatActivity() {
             if (bitmap != null) {
                 lastBitmapForEvidence = bitmap
                 binding.overlayView.setSourceSize(bitmap.width, bitmap.height)
+
+                // 1) كشف الوجوه (على كل إطار - غير متزامن عبر LIVE_STREAM)
                 faceMonitor?.detectAsync(bitmap, System.currentTimeMillis())
+
+                // 2) كشف الممنوعات (كل عدة إطارات فقط - أثقل حسابياً بسبب تقسيم الصورة)
+                val count = frameCounter.incrementAndGet()
+                if (count % OBJECT_DETECTION_INTERVAL == 0 && isProcessingObjects.compareAndSet(false, true)) {
+                    val bitmapCopy = bitmap.copy(bitmap.config, false)
+                    objectDetectionExecutor.execute {
+                        try {
+                            val detections = objectMonitor?.detectTiled(bitmapCopy) ?: emptyList()
+                            runOnUiThread { onObjectResults(detections, bitmapCopy) }
+                        } catch (e: Exception) {
+                            android.util.Log.e("MainActivity", "خطأ بكشف الممنوعات: ${e.message}")
+                        } finally {
+                            isProcessingObjects.set(false)
+                        }
+                    }
+                }
             }
         } catch (e: Exception) {
             android.util.Log.e("MainActivity", "خطأ بتحليل الإطار: ${e.message}")
@@ -170,11 +207,7 @@ class MainActivity : AppCompatActivity() {
 
         val boxes = statuses.map { s ->
             val color = if (s.sustained) Color.rgb(255, 165, 0) else Color.rgb(0, 255, 0)
-            OverlayView.FaceBox(
-                rect = s.rect,
-                label = "S${s.objectID}: ${s.direction}",
-                color = color
-            )
+            OverlayView.FaceBox(rect = s.rect, label = "S${s.objectID}: ${s.direction}", color = color)
         }
         binding.overlayView.updateFaces(boxes)
 
@@ -194,20 +227,64 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** يقابل الجزء الأول من update_frame() بالبايثون (رسم + تنبيهات الممنوعات) */
+    private fun onObjectResults(detections: List<ObjectMonitor.DetectedObject>, evidenceBitmap: android.graphics.Bitmap) {
+        val boxes = detections.map { d ->
+            OverlayView.ObjectBox(
+                rect = d.rect,
+                label = "ممنوع: ${d.category} (${(d.confidence * 100).toInt()}%)"
+            )
+        }
+        binding.overlayView.updateObjects(boxes)
+
+        for (d in detections) {
+            val triggered = alertManager.trigger(
+                reasonKey = "obj_${d.category}",
+                message = "🚨 مخالفة: رصد (${d.category}) بدقة ${(d.confidence * 100).toInt()}%",
+                evidenceBitmap = evidenceBitmap,
+                evidenceReason = "Object_${d.category}"
+            ) { _, _ ->
+                violationsCount++
+                binding.tvViolationsCount.text = "المخالفات المسجلة: $violationsCount"
+            }
+            if (triggered) refreshLogView()
+        }
+    }
+
+    /** يقابل audio_callback() بالبايثون */
+    private fun onAudioViolation() {
+        val triggered = alertManager.trigger(
+            reasonKey = "audio_violation",
+            message = "🚨 مخالفة: تم رصد أصوات وتحدث في القاعة!",
+            evidenceBitmap = null,
+            evidenceReason = ""
+        ) { _, _ ->
+            violationsCount++
+            binding.tvViolationsCount.text = "المخالفات المسجلة: $violationsCount"
+        }
+        if (triggered) refreshLogView()
+    }
+
     private fun stopMonitoring() {
         isMonitoring = false
         cameraProvider?.unbindAll()
 
         faceMonitor?.close()
         faceMonitor = null
+        objectMonitor?.close()
+        objectMonitor = null
+        audioMonitor?.stop()
+        audioMonitor = null
 
         binding.tvCameraPlaceholder.visibility = android.view.View.VISIBLE
         binding.btnStart.isEnabled = true
         binding.btnStop.isEnabled = false
+        binding.swHallMode.isEnabled = true
         binding.tvStudentsCount.text = "الطلاب في القاعة: 0"
         binding.overlayView.updateFaces(emptyList())
         binding.overlayView.updateObjects(emptyList())
         studentsCount = 0
+        frameCounter.set(0)
 
         logEvent("تم إيقاف المراقبة.")
 
@@ -217,7 +294,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** يقابل log_event() بالبايثون */
     private fun logEvent(message: String) {
         alertManager.logEvent(message)
         refreshLogView()
@@ -233,7 +309,10 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         cameraExecutor.shutdown()
+        objectDetectionExecutor.shutdown()
         faceMonitor?.close()
+        objectMonitor?.close()
+        audioMonitor?.stop()
         alertManager.release()
     }
 }
